@@ -1,0 +1,98 @@
+version: "0.1.0"
+events:
+  - name: StartPing
+    visibility: internal
+    fields:
+      - name: correlation_id
+        type: string
+  - name: PingRequested
+    visibility: public
+    version: "1.0.0"
+    fields:
+      - name: correlation_id
+        type: string
+  - name: PongReturned
+    visibility: public
+    version: "1.0.0"
+    fields:
+      - name: correlation_id
+        type: string
+  - name: PingTimedOut
+    visibility: internal
+    kind: signal
+    fields:
+      - name: correlation_id
+        type: string
+components:
+  - name: Pinger
+    state:
+      fields:
+        - name: outstanding
+          type: map<string, string>
+    ports:
+      - name: commands
+        direction: in
+        event: StartPing
+      - name: requests
+        direction: out
+        event: PingRequested
+        contracts:
+          must_reply: true
+          timeout:
+            after: 5s
+      - name: pong_in
+        direction: in
+        event: PongReturned
+      - name: timeout_in
+        direction: in
+        event: PingTimedOut
+    transitions:
+      - name: start_ping
+        on: StartPing
+        writes:
+          - outstanding
+        emits:
+          - PingRequested
+      - name: finish_ping
+        on: PongReturned
+        reads:
+          - outstanding
+        writes:
+          - outstanding
+        ensures:
+          - "outstanding entry cleared"
+      - name: timeout_ping
+        on: PingTimedOut
+        reads:
+          - outstanding
+        writes:
+          - outstanding
+        requires:
+          - "timer fired for known correlation"
+  - name: Ponger
+    state:
+      fields: []
+    ports:
+      - name: requests
+        direction: in
+        event: PingRequested
+      - name: responses
+        direction: out
+        event: PongReturned
+    transitions:
+      - name: answer_ping
+        on: PingRequested
+        emits:
+          - PongReturned
+connections:
+  - from: Pinger.requests
+    to: Ponger.requests
+  - from: Ponger.responses
+    to: Pinger.pong_in
+actors:
+  - name: node-a
+    components:
+      - Pinger
+  - name: node-b
+    components:
+      - Ponger

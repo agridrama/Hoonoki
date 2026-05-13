@@ -1,0 +1,121 @@
+version: "0.1.0"
+events:
+  - name: StartSend
+    visibility: internal
+    fields:
+      - name: message_id
+        type: string
+      - name: payload
+        type: string
+  - name: RetryTimeout
+    visibility: internal
+    kind: signal
+    fields:
+      - name: message_id
+        type: string
+  - name: LinkMessage
+    visibility: public
+    version: "1.0.0"
+    fields:
+      - name: message_id
+        type: string
+      - name: payload
+        type: string
+  - name: LinkAck
+    visibility: public
+    version: "1.0.0"
+    fields:
+      - name: message_id
+        type: string
+  - name: DeliveredToReceiver
+    visibility: internal
+    fields:
+      - name: message_id
+        type: string
+components:
+  - name: StubbornSender
+    state:
+      fields:
+        - name: in_flight
+          type: map<string, string>
+    ports:
+      - name: start_in
+        direction: in
+        event: StartSend
+      - name: retry_in
+        direction: in
+        event: RetryTimeout
+      - name: network_out
+        direction: out
+        event: LinkMessage
+        contracts:
+          must_reply: true
+          retry:
+            strategy: fixed_interval
+          timeout:
+            after: 3s
+      - name: network_in
+        direction: in
+        event: LinkAck
+    transitions:
+      - name: send_first_time
+        on: StartSend
+        writes:
+          - in_flight
+        emits:
+          - LinkMessage
+      - name: retransmit_after_timeout
+        on: RetryTimeout
+        reads:
+          - in_flight
+        writes:
+          - in_flight
+        emits:
+          - LinkMessage
+        requires:
+          - "message is still in flight"
+      - name: clear_after_ack
+        on: LinkAck
+        reads:
+          - in_flight
+        writes:
+          - in_flight
+        ensures:
+          - "matching in flight entry is cleared"
+  - name: StubbornReceiver
+    state:
+      fields: []
+    ports:
+      - name: network_in
+        direction: in
+        event: LinkMessage
+      - name: ack_out
+        direction: out
+        event: LinkAck
+      - name: deliver_out
+        direction: out
+        event: DeliveredToReceiver
+    transitions:
+      - name: receive_and_ack
+        on: LinkMessage
+        emits:
+          - LinkAck
+          - DeliveredToReceiver
+connections:
+  - from: StubbornSender.network_out
+    to: StubbornReceiver.network_in
+    contracts:
+      delivery: at_least_once
+      retry:
+        strategy: fixed_interval
+  - from: StubbornReceiver.ack_out
+    to: StubbornSender.network_in
+    contracts:
+      delivery: at_least_once
+actors:
+  - name: sender-runtime
+    components:
+      - StubbornSender
+  - name: receiver-runtime
+    components:
+      - StubbornReceiver

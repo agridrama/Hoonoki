@@ -1,0 +1,10 @@
+[package]
+name = "hnk-idl"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_yaml = "0.9"
+
