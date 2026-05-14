@@ -12,4 +12,4 @@ pub mod semantics;
 
 pub use ast::Spec;
 pub use diagnostics::{Diagnostic, DiagnosticSet, Severity, SourceLocation};
-pub use parse::{load_spec, parse_spec};
+pub use parse::{BundleAst, BundleFileAst, load_bundle, load_spec, parse_spec};

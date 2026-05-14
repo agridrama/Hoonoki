@@ -38,7 +38,7 @@ pub fn render_project_files(
     });
 
     for component in spec.components.values() {
-        let module_name = module_name(&component.name);
+        let module_name = component_module_name(component, spec);
         let component_dir = format!("src/generated/{module_name}");
         files.push(RenderedFile {
             relative_path: PathBuf::from(format!("{component_dir}/mod.rs")),
@@ -79,7 +79,7 @@ pub fn render_project_files(
         if create_app_scaffold {
             files.push(RenderedFile {
                 relative_path: PathBuf::from(format!("src/app/{module_name}.rs")),
-                contents: render_app_scaffold(component, header),
+                contents: render_app_scaffold(component, spec, header),
                 preserve_existing: true,
             });
         }
@@ -109,6 +109,20 @@ pub fn module_name(name: &str) -> String {
         }
     }
     output
+}
+
+pub fn component_module_name(component: &NormalizedComponent, spec: &NormalizedSpec) -> String {
+    let duplicate_count = spec
+        .components
+        .values()
+        .filter(|candidate| candidate.name == component.name)
+        .count();
+
+    if duplicate_count > 1 {
+        module_name(&component.qualified_name)
+    } else {
+        module_name(&component.name)
+    }
 }
 
 pub fn type_name(name: &str) -> String {
@@ -172,7 +186,9 @@ pub fn outgoing_connections_for_port<'a>(
     spec.connections
         .iter()
         .filter(|connection| {
-            connection.from_component == component_name && connection.from_port == port_name
+            connection.within_component == component_name
+                && connection.from_target == "self"
+                && connection.from_port == port_name
         })
         .collect()
 }
@@ -197,7 +213,10 @@ fn render_generated_root_mod(spec: &NormalizedSpec, header: &str) -> String {
     out.push('\n');
     out.push_str("pub mod runtime_contracts;\n");
     for component in spec.components.values() {
-        out.push_str(&format!("pub mod {};\n", module_name(&component.name)));
+        out.push_str(&format!(
+            "pub mod {};\n",
+            component_module_name(component, spec)
+        ));
     }
     out
 }
@@ -211,7 +230,7 @@ fn render_generated_runtime_contracts(header: &str) -> String {
              pub component: &'static str,\n\
              pub port: Option<&'static str>,\n\
              pub event: Option<&'static str>,\n\
-             pub actor_crossing: bool,\n\
+             pub locality: &'static str,\n\
              pub correlation_hint: Option<&'static str>,\n\
              pub retry_hint: Option<&'static str>,\n\
          }\n\n\
@@ -255,9 +274,9 @@ fn render_component_mod(component: &NormalizedComponent, header: &str) -> String
     out
 }
 
-fn render_app_scaffold(component: &NormalizedComponent, header: &str) -> String {
+fn render_app_scaffold(component: &NormalizedComponent, spec: &NormalizedSpec, header: &str) -> String {
     let type_name = type_name(&component.name);
-    let component_module = module_name(&component.name);
+    let component_module = component_module_name(component, spec);
     format!(
         "{header}\n\nuse crate::generated::{component_module}::hooks::{type_name}Handler;\nuse crate::generated::{component_module}::state::{type_name}State;\n\npub struct {type_name}App;\n\nimpl {type_name}Handler for {type_name}App {{\n{methods}}}\n",
         methods = component

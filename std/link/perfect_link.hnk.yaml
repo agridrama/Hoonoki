@@ -1,0 +1,50 @@
+version: "0.1.0"
+package: std.link
+imports:
+  - std/link/stubborn_link.hnk.yaml
+events: []
+components:
+  - name: PerfectLink
+    doc: |
+      Composition-oriented example of wrapping a lower-level link.
+      This spec is not yet the canonical semantic definition of perfect links.
+      It exists to test where Hoonoki should draw the line between IDL-visible behavior
+      and implementation/runtime semantics.
+    uses:
+      - name: sl
+        component: StubbornLink
+    state:
+      fields:
+        - name: delivered
+          type: map<string, string>
+    ports:
+      - name: send_in
+        direction: in
+        event: LinkSend
+      - name: deliver_out
+        direction: out
+        event: LinkDeliver
+      - name: sl_send_out
+        direction: out
+        event: LinkSend
+      - name: sl_deliver_in
+        direction: in
+        event: LinkDeliver
+    transitions:
+      - name: send_once
+        on: LinkSend
+        emits: [LinkSend]
+      - name: accept_delivery
+        on: LinkDeliver
+        reads: [delivered]
+        writes: [delivered]
+        emits: [LinkDeliver]
+connections:
+  - within: PerfectLink
+    from: self.sl_send_out
+    to: sl.send_in
+    locality: local
+  - within: PerfectLink
+    from: sl.deliver_out
+    to: self.sl_deliver_in
+    locality: local

@@ -1,11 +1,41 @@
 version: "0.1.0"
+package: examples.link
+imports: []
 events:
-  - name: StartSend
+  - name: LinkSend
+    visibility: public
+    version: "1.0.0"
+    fields:
+      - name: message_id
+        type: string
+      - name: payload
+        type: string
+  - name: LinkDeliver
+    visibility: public
+    version: "1.0.0"
+    fields:
+      - name: message_id
+        type: string
+      - name: payload
+        type: string
+  - name: FairLossSend
     visibility: internal
     fields:
       - name: message_id
         type: string
       - name: payload
+        type: string
+  - name: FairLossDeliver
+    visibility: internal
+    fields:
+      - name: message_id
+        type: string
+      - name: payload
+        type: string
+  - name: ArmRetryTimer
+    visibility: internal
+    fields:
+      - name: message_id
         type: string
   - name: RetryTimeout
     visibility: internal
@@ -13,109 +43,96 @@ events:
     fields:
       - name: message_id
         type: string
-  - name: LinkMessage
-    visibility: public
-    version: "1.0.0"
-    fields:
-      - name: message_id
-        type: string
-      - name: payload
-        type: string
-  - name: LinkAck
-    visibility: public
-    version: "1.0.0"
-    fields:
-      - name: message_id
-        type: string
-  - name: DeliveredToReceiver
-    visibility: internal
-    fields:
-      - name: message_id
-        type: string
 components:
-  - name: StubbornSender
-    state:
-      fields:
-        - name: in_flight
-          type: map<string, string>
-    ports:
-      - name: start_in
-        direction: in
-        event: StartSend
-      - name: retry_in
-        direction: in
-        event: RetryTimeout
-      - name: network_out
-        direction: out
-        event: LinkMessage
-        contracts:
-          must_reply: true
-          retry:
-            strategy: fixed_interval
-          timeout:
-            after: 3s
-      - name: network_in
-        direction: in
-        event: LinkAck
-    transitions:
-      - name: send_first_time
-        on: StartSend
-        writes:
-          - in_flight
-        emits:
-          - LinkMessage
-      - name: retransmit_after_timeout
-        on: RetryTimeout
-        reads:
-          - in_flight
-        writes:
-          - in_flight
-        emits:
-          - LinkMessage
-        requires:
-          - "message is still in flight"
-      - name: clear_after_ack
-        on: LinkAck
-        reads:
-          - in_flight
-        writes:
-          - in_flight
-        ensures:
-          - "matching in flight entry is cleared"
-  - name: StubbornReceiver
+  - name: FairLossLink
     state:
       fields: []
     ports:
-      - name: network_in
+      - name: send_in
         direction: in
-        event: LinkMessage
-      - name: ack_out
-        direction: out
-        event: LinkAck
+        event: FairLossSend
       - name: deliver_out
         direction: out
-        event: DeliveredToReceiver
+        event: FairLossDeliver
     transitions:
-      - name: receive_and_ack
-        on: LinkMessage
-        emits:
-          - LinkAck
-          - DeliveredToReceiver
+      - name: forward_once
+        on: FairLossSend
+        emits: [FairLossDeliver]
+  - name: RetryTimer
+    state:
+      fields: []
+    ports:
+      - name: arm_in
+        direction: in
+        event: ArmRetryTimer
+      - name: timeout_out
+        direction: out
+        event: RetryTimeout
+    transitions:
+      - name: arm_timer
+        on: ArmRetryTimer
+        emits: [RetryTimeout]
+  - name: StubbornLink
+    uses:
+      - name: fll
+        component: FairLossLink
+      - name: timer
+        component: RetryTimer
+    state:
+      fields:
+        - name: sent
+          type: map<string, string>
+    ports:
+      - name: send_in
+        direction: in
+        event: LinkSend
+      - name: deliver_out
+        direction: out
+        event: LinkDeliver
+      - name: fll_send_out
+        direction: out
+        event: FairLossSend
+        contracts:
+          retry:
+            strategy: fixed_interval
+      - name: fll_deliver_in
+        direction: in
+        event: FairLossDeliver
+      - name: timer_arm_out
+        direction: out
+        event: ArmRetryTimer
+      - name: timeout_in
+        direction: in
+        event: RetryTimeout
+    transitions:
+      - name: send_first_time
+        on: LinkSend
+        writes: [sent]
+        emits: [FairLossSend, ArmRetryTimer]
+      - name: retransmit_after_timeout
+        on: RetryTimeout
+        reads: [sent]
+        writes: [sent]
+        emits: [FairLossSend, ArmRetryTimer]
+      - name: deliver_from_fair_loss
+        on: FairLossDeliver
+        emits: [LinkDeliver]
 connections:
-  - from: StubbornSender.network_out
-    to: StubbornReceiver.network_in
+  - within: StubbornLink
+    from: self.fll_send_out
+    to: fll.send_in
+    locality: non_local
     contracts:
       delivery: at_least_once
-      retry:
-        strategy: fixed_interval
-  - from: StubbornReceiver.ack_out
-    to: StubbornSender.network_in
-    contracts:
-      delivery: at_least_once
-actors:
-  - name: sender-runtime
-    components:
-      - StubbornSender
-  - name: receiver-runtime
-    components:
-      - StubbornReceiver
+  - within: StubbornLink
+    from: fll.deliver_out
+    to: self.fll_deliver_in
+    locality: non_local
+  - within: StubbornLink
+    from: self.timer_arm_out
+    to: timer.arm_in
+    locality: local
+  - within: StubbornLink
+    from: timer.timeout_out
+    to: self.timeout_in
+    locality: local

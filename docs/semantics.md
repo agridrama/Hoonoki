@@ -5,10 +5,11 @@
 Hoonoki models distributed systems as explicit stateful interactions.
 
 - A `component` is a stateful computational unit.
+- A `component` may internally use other components as named instances.
 - An `event` is a typed interaction.
 - A `transition` consumes an input event and may emit further events.
 - A `connection` defines how events propagate between component ports.
-- An `actor` defines a local execution boundary.
+- A `connection.locality` flag defines whether a propagation step is local or non-local.
 - A `contract` describes communication expectations layered on top of the interaction graph.
 
 The model is intentionally about behavioral possibility, not exact machine placement. The IDL says which interactions may happen and which components may participate, without requiring a concrete node-by-node wiring diagram.
@@ -36,11 +37,11 @@ Connections are read as propagation possibilities.
 
 This makes replicated and peer-style protocols expressible without forcing the language to model runtime nodes directly.
 
-Actor boundaries refine this interpretation:
+Locality refines this interpretation:
 
-- Inside one actor, propagation may be local and direct.
-- Across actors, propagation may cross a network or another non-local boundary.
-- Contracts become especially meaningful on actor-crossing connections because transport and reply guarantees matter more there.
+- `local` propagation may be direct or in-memory.
+- `non_local` propagation may cross a network or another transport boundary.
+- Contracts become especially meaningful on `non_local` connections because transport and reply guarantees matter more there.
 
 ## Transition Semantics
 
@@ -87,10 +88,11 @@ This is a guide for internal semantics and normalization rules, not a commitment
 Hoonoki does not start from an abstract category DSL. It starts from operational concepts that engineers already need:
 
 - explicit state
+- subcomponent composition
 - transitions
 - ports
 - connections
-- actors
+- locality
 - contracts
 
 The internal semantics should make those concepts more coherent and analyzable, not less legible.

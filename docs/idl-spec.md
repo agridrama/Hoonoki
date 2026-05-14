@@ -2,17 +2,17 @@
 
 ## Format
 
-The MVP format is YAML. One file describes one spec.
+The MVP format is YAML. One file describes one package-scoped spec unit, and an entry file may import other files to form a bundle.
 
 ## Top-Level Structure
 
 Required top-level fields:
 
 - `version`
+- `package`
 - `events`
 - `components`
 - `connections`
-- `actors`
 
 Optional top-level fields:
 
@@ -21,7 +21,9 @@ Optional top-level fields:
 - `assumptions`
 - `imports`
 
-`imports` is reserved for future use if the project adopts a standard-library style distribution of reusable components and specs.
+`package` uses lower_snake segments separated by dots, similar to proto packages.
+
+`imports` is a list of file paths relative to the chosen import root. Imported files expose their top-level definitions for reference by package-qualified name.
 
 ## Events
 
@@ -61,10 +63,15 @@ Optional fields:
 - `persistence`
 - `assumptions`
 - `doc`
+- `uses`
 
 Components are explicit stateful units. State is part of the DSL and is not inferred.
 
 In MVP, a component is a behavioral definition, not a concrete runtime node instance.
+
+`uses` declares named subcomponent instances available inside the component definition.
+
+Cross-package `uses[].component` references should use fully-qualified names such as `std.link.PerfectLink`.
 
 ## Ports
 
@@ -112,6 +119,28 @@ Notes:
 - `reads` and `writes` declare state access.
 - `requires` and `ensures` are annotations in MVP. They are parsed and preserved, but not given a full predicate semantics yet.
 - The same event type may be consumed and emitted by the same component if the modeled protocol allows it.
+- Cross-package event references should use fully-qualified names such as `std.link.LinkSend`.
+
+## Connections
+
+Required fields:
+
+- `within`
+- `from`
+- `to`
+- `locality`
+
+`within` names the enclosing component definition whose internal wiring is being described.
+
+`from` and `to` must use one of:
+
+- `self.<port>`
+- `<instance>.<port>`
+
+`locality` is one of:
+
+- `local`
+- `non_local`
 
 ## Compensation
 
@@ -135,44 +164,26 @@ This keeps the core DSL small while preserving a path toward future first-class 
 
 Required fields:
 
+- `within`
 - `from`
 - `to`
+- `locality`
 
 Optional fields:
 
 - `contracts`
 - `doc`
 
-Connections link `component.port` endpoints and define propagation paths between components.
+Connections are declared inside the scope of one enclosing component definition.
+
+- `within` names that enclosing component.
+- `from` and `to` must use `self.port` or `instance.port`.
+- `locality` is one of `local` or `non_local`.
 
 In MVP, a connection is primarily a declaration that an event can propagate from one component role to another.
 
-- Inside one actor, this may correspond to local dispatch.
-- Across actors, this may correspond to networked or otherwise non-local propagation.
-
-The IDL does not require a concrete machine-instance graph, but actor-crossing connections are the main place where contracts matter operationally.
-
-## Actors
-
-Required fields:
-
-- `name`
-- `components`
-
-Optional fields:
-
-- `role_selector`
-- `routing`
-- `doc`
-
-Actors define local execution boundaries for groups of components.
-
-Actors are the main distinction between local interaction and potentially non-local interaction.
-
-- Inside an actor, component interaction may be lightweight and local.
-- Across actors, event propagation may require transport guarantees and runtime coordination.
-
-Actors are intentionally lightweight in MVP. They help describe boundaries and analysis scope, but they do not require the IDL to model concrete machine identities one-to-one.
+- `local` connections may be implemented as direct dispatch or in-memory coordination.
+- `non_local` connections may require transport guarantees and runtime coordination.
 
 ## Contracts
 
@@ -188,7 +199,7 @@ The MVP contract vocabulary includes:
 
 Contracts may appear globally or on specific interaction points such as ports or connections.
 
-Contracts are especially important on connections or ports that participate in actor-crossing propagation, because those interactions may rely on non-local transport behavior.
+Contracts are especially important on connections or ports that participate in `non_local` propagation, because those interactions may rely on transport behavior.
 
 Timeout may be modeled in two distinct ways:
 

@@ -9,7 +9,7 @@ pub fn render(component: &NormalizedComponent, spec: &NormalizedSpec, header: &s
     out.push_str("\n\n");
     out.push_str(&format!(
         "pub const COMPONENT_NAME: &str = {:?};\n\n",
-        component.name
+        component.qualified_name
     ));
 
     out.push_str("// inbound ports\n");
@@ -29,14 +29,14 @@ pub fn render(component: &NormalizedComponent, spec: &NormalizedSpec, header: &s
         ));
     }
 
-    out.push_str("\n// actor boundary notes\n");
-    for connection in &spec.actor_boundary_crossings {
-        if connection.from_component == component.name || connection.to_component == component.name {
+    out.push_str("\n// non-local wiring notes\n");
+    for connection in &spec.non_local_connections {
+        if connection.within_component == component.qualified_name {
             out.push_str(&format!(
-                "// actor-crossing: {}.{} -> {}.{}\n",
-                connection.from_component,
+                "// non-local: {}.{} -> {}.{}\n",
+                connection.from_target,
                 connection.from_port,
-                connection.to_component,
+                connection.to_target,
                 connection.to_port
             ));
         }

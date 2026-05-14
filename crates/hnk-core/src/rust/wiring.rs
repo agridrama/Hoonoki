@@ -1,4 +1,4 @@
-use hnk_idl::schema::PortDirection;
+use hnk_idl::schema::{ConnectionLocality, PortDirection};
 use hnk_tools::contracts::{has_must_reply, timeout_after};
 use hnk_tools::ir::NormalizedComponent;
 use hnk_tools::NormalizedSpec;
@@ -24,8 +24,8 @@ pub fn render(component: &NormalizedComponent, spec: &NormalizedSpec, header: &s
         type_name, type_name
     ));
     out.push_str(&format!(
-        "    pub fn run_transition(&mut self, transition: &str, state: &mut {}State) {{\n        let meta = metadata({:?}, None, None, false);\n        self.runtime_hooks.on_transition_enter(&meta);\n        match transition {{\n",
-        type_name, component.name
+        "    pub fn run_transition(&mut self, transition: &str, state: &mut {}State) {{\n        let meta = metadata({:?}, None, None, \"local\");\n        self.runtime_hooks.on_transition_enter(&meta);\n        match transition {{\n",
+        type_name, component.qualified_name
     ));
     for transition in component.transitions.values() {
         out.push_str(&format!(
@@ -46,9 +46,9 @@ pub fn render(component: &NormalizedComponent, spec: &NormalizedSpec, header: &s
         let timeout = timeout_after(&port.contracts);
         let event = &port.event;
         out.push_str(&format!(
-            "        let meta_{} = metadata({:?}, Some({:?}), Some({:?}), false);\n        self.runtime_hooks.on_send(&meta_{});\n",
+            "        let meta_{} = metadata({:?}, Some({:?}), Some({:?}), \"local\");\n        self.runtime_hooks.on_send(&meta_{});\n",
             module_name(event),
-            component.name,
+            component.qualified_name,
             port.name,
             event,
             module_name(event)
@@ -70,24 +70,28 @@ pub fn render(component: &NormalizedComponent, spec: &NormalizedSpec, header: &s
             ));
         }
 
-        let connections = outgoing_connections_for_port(spec, &component.name, &port.name);
+        let connections = outgoing_connections_for_port(spec, &component.qualified_name, &port.name);
         if connections.is_empty() {
             out.push_str("        // No declared propagation paths for this port.\n");
         }
         for connection in connections {
-            let target_actor = connection.to_actor.as_deref().unwrap_or("<unassigned>");
-            if connection.crosses_actor_boundary {
+            if matches!(connection.locality, ConnectionLocality::NonLocal) {
                 out.push_str(&format!(
-                    "        let boundary_meta = metadata({:?}, Some({:?}), None, true);\n        self.runtime_hooks.on_non_local_dispatch(&boundary_meta);\n        self.non_local_dispatch.dispatch_non_local(&boundary_meta);\n        // target actor: {}\n",
-                    component.name,
+                    "        let boundary_meta = metadata({:?}, Some({:?}), Some({:?}), \"non_local\");\n        self.runtime_hooks.on_non_local_dispatch(&boundary_meta);\n        self.non_local_dispatch.dispatch_non_local(&boundary_meta);\n        // target endpoint: {}.{}\n",
+                    component.qualified_name,
                     port.name,
-                    target_actor
+                    event,
+                    connection.to_target,
+                    connection.to_port
                 ));
             } else {
                 out.push_str(&format!(
-                    "        let local_meta = metadata({:?}, Some({:?}), None, false);\n        self.local_dispatch.dispatch_local(&local_meta);\n",
-                    component.name,
-                    port.name
+                    "        let local_meta = metadata({:?}, Some({:?}), Some({:?}), \"local\");\n        self.local_dispatch.dispatch_local(&local_meta);\n        // target endpoint: {}.{}\n",
+                    component.qualified_name,
+                    port.name,
+                    event,
+                    connection.to_target,
+                    connection.to_port
                 ));
             }
         }
@@ -101,10 +105,10 @@ pub fn render(component: &NormalizedComponent, spec: &NormalizedSpec, header: &s
     {
         let event = &port.event;
         out.push_str(&format!(
-            "    pub fn observe_{}_{}(&mut self) {{\n        let meta = metadata({:?}, Some({:?}), Some({:?}), false);\n        self.runtime_hooks.on_receive(&meta);\n",
+            "    pub fn observe_{}_{}(&mut self) {{\n        let meta = metadata({:?}, Some({:?}), Some({:?}), \"local\");\n        self.runtime_hooks.on_receive(&meta);\n",
             method_name(&port.name),
             module_name(event),
-            component.name,
+            component.qualified_name,
             port.name,
             event
         ));

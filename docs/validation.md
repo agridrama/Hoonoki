@@ -19,7 +19,6 @@ MVP static validation is responsible for structural and reference correctness su
 - invalid connection direction
 - port and event mismatches
 - unresolved state field references in `reads` and `writes`
-- invalid actor membership references
 - duplicate names
 - missing `version` on `public` events
 - missing declared reply paths for `must_reply`
@@ -28,7 +27,7 @@ Compensation flows are validated as ordinary event and transition structure in M
 
 Static validation checks declared possibility and consistency. It does not prove that a specific runtime deployment, participant count, or node topology exists.
 
-It does, however, treat actor boundaries as meaningful. Actor-crossing connections identify where non-local behavior may start, even though the validator still does not bind actors to one exact machine model.
+It does, however, treat declared locality as meaningful. `non_local` connections identify where transport-sensitive behavior may start, even though the validator still does not bind the model to one exact runtime layout.
 
 Static validation does not prove full behavioral correctness. It proves that the declared model is internally coherent enough for further tooling.
 
@@ -48,7 +47,7 @@ Reusable monitoring or coordination components such as heartbeat monitors and fa
 
 These are expected to appear as hook points or generated integration surfaces rather than as a complete runtime implementation.
 
-In practice, runtime contracts matter most when events cross actor boundaries, because those are the places where local call semantics are no longer enough.
+In practice, runtime contracts matter most when events cross declared `non_local` boundaries, because those are the places where local call semantics are no longer enough.
 
 ## Diagnostic Expectations
 

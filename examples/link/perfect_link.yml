@@ -1,19 +1,8 @@
 version: "0.1.0"
+package: examples.link
+imports: []
 events:
-  - name: StartReliableSend
-    visibility: internal
-    fields:
-      - name: message_id
-        type: string
-      - name: payload
-        type: string
-  - name: RetryTimeout
-    visibility: internal
-    kind: signal
-    fields:
-      - name: message_id
-        type: string
-  - name: PerfectLinkMessage
+  - name: LinkSend
     visibility: public
     version: "1.0.0"
     fields:
@@ -21,115 +10,73 @@ events:
         type: string
       - name: payload
         type: string
-  - name: PerfectLinkAck
+  - name: LinkDeliver
     visibility: public
     version: "1.0.0"
-    fields:
-      - name: message_id
-        type: string
-  - name: DeliverOnce
-    visibility: internal
     fields:
       - name: message_id
         type: string
       - name: payload
         type: string
 components:
-  - name: PerfectSender
+  - name: StubbornLink
+    doc: |
+      Minimal lower-level link surface used as a composition dependency.
+      This example does not claim full stubborn-link semantics.
     state:
-      fields:
-        - name: pending
-          type: map<string, string>
+      fields: []
     ports:
-      - name: start_in
+      - name: send_in
         direction: in
-        event: StartReliableSend
-      - name: retry_in
-        direction: in
-        event: RetryTimeout
-      - name: network_out
+        event: LinkSend
+      - name: deliver_out
         direction: out
-        event: PerfectLinkMessage
-        contracts:
-          must_reply: true
-          retry:
-            strategy: fixed_interval
-          timeout:
-            after: 3s
-      - name: network_in
-        direction: in
-        event: PerfectLinkAck
+        event: LinkDeliver
     transitions:
-      - name: start_send
-        on: StartReliableSend
-        writes:
-          - pending
-        emits:
-          - PerfectLinkMessage
-      - name: retry_send
-        on: RetryTimeout
-        reads:
-          - pending
-        writes:
-          - pending
-        emits:
-          - PerfectLinkMessage
-      - name: finish_send
-        on: PerfectLinkAck
-        reads:
-          - pending
-        writes:
-          - pending
-  - name: PerfectReceiver
+      - name: pass_through
+        on: LinkSend
+        emits: [LinkDeliver]
+  - name: PerfectLink
+    doc: |
+      Composition-oriented example of wrapping a lower-level link.
+      This spec is not yet the canonical semantic definition of perfect links.
+      It exists to test where Hoonoki should draw the line between IDL-visible behavior
+      and implementation/runtime semantics.
+    uses:
+      - name: sl
+        component: StubbornLink
     state:
       fields:
         - name: delivered
           type: map<string, string>
     ports:
-      - name: network_in
+      - name: send_in
         direction: in
-        event: PerfectLinkMessage
-      - name: ack_out
-        direction: out
-        event: PerfectLinkAck
+        event: LinkSend
       - name: deliver_out
         direction: out
-        event: DeliverOnce
+        event: LinkDeliver
+      - name: sl_send_out
+        direction: out
+        event: LinkSend
+      - name: sl_deliver_in
+        direction: in
+        event: LinkDeliver
     transitions:
-      - name: accept_new_message
-        on: PerfectLinkMessage
-        reads:
-          - delivered
-        writes:
-          - delivered
-        emits:
-          - PerfectLinkAck
-          - DeliverOnce
-        requires:
-          - "message has not been delivered before"
-      - name: ack_duplicate_without_redelivery
-        on: PerfectLinkMessage
-        reads:
-          - delivered
-        emits:
-          - PerfectLinkAck
-        requires:
-          - "message may already be present in delivered set"
+      - name: send_once
+        on: LinkSend
+        emits: [LinkSend]
+      - name: accept_delivery
+        on: LinkDeliver
+        reads: [delivered]
+        writes: [delivered]
+        emits: [LinkDeliver]
 connections:
-  - from: PerfectSender.network_out
-    to: PerfectReceiver.network_in
-    contracts:
-      delivery: retransmit_until_ack
-      timeout:
-        after: 3s
-  - from: PerfectReceiver.ack_out
-    to: PerfectSender.network_in
-    contracts:
-      delivery: at_least_once
-actors:
-  - name: sender-runtime
-    components:
-      - PerfectSender
-  - name: receiver-runtime
-    components:
-      - PerfectReceiver
+  - within: PerfectLink
+    from: self.sl_send_out
+    to: sl.send_in
+    locality: local
+  - within: PerfectLink
+    from: sl.deliver_out
+    to: self.sl_deliver_in
+    locality: local

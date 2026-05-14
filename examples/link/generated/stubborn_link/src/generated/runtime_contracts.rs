@@ -5,7 +5,7 @@ pub struct HookMetadata {
 pub component: &'static str,
 pub port: Option<&'static str>,
 pub event: Option<&'static str>,
-pub actor_crossing: bool,
+pub locality: &'static str,
 pub correlation_hint: Option<&'static str>,
 pub retry_hint: Option<&'static str>,
 }

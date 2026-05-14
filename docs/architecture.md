@@ -16,6 +16,7 @@ The implementation order is validate-first. Code generation depends on normalize
 
 - Define the YAML syntax
 - Parse specs into AST
+- Load import bundles from a project root
 - Preserve source locations for diagnostics
 - Carry syntax-level structures such as `transitions`, `contracts`, `requires`, and `ensures`
 
@@ -26,7 +27,7 @@ The implementation order is validate-first. Code generation depends on normalize
 - Build `NormalizedSpec`
 - Run static validation
 - Produce lint warnings and analysis views
-- Treat connections as declared propagation possibilities, with special attention to actor-boundary crossings
+- Treat connections as declared propagation possibilities, with special attention to declared locality boundaries
 
 ### `hnk-core`
 
@@ -43,16 +44,22 @@ The implementation order is validate-first. Code generation depends on normalize
 - Prefer explicit state and transition structure over implicit flow inference
 - Prefer reusable standard components over adding narrow built-in syntax for common distributed patterns
 - Prefer describing what events can be produced, consumed, and propagated over modeling concrete machine placement in the IDL
+- Prefer component composition over deployment-oriented topology in the core DSL
+- Prefer proto-like `package + import` separation for reusable specs
 
-## Actor Boundary
+## Composition And Locality
 
-An `actor` is a local execution boundary for a group of components.
+A `component` may internally use other components as named instances.
 
-- Components inside one actor are assumed to coordinate locally.
-- Event propagation inside an actor may be implemented as function calls, in-memory dispatch, or other local mechanisms.
-- Event propagation across actors may cross a network or other non-local transport boundary.
+- `uses` declares those subcomponent instances.
+- `self.port` refers to the composite component's own boundary.
+- `instance.port` refers to a used subcomponent's boundary.
+- `connections` describe how events propagate between those endpoints.
 
-This is why connection contracts become especially important at actor crossings. The IDL still does not require `actor` to mean one specific physical machine or process model, but actor boundaries are intended to mark where non-local communication concerns begin.
+`connection.locality` marks whether a propagation step is expected to stay local or cross a non-local runtime boundary.
+
+- `local` means code generation may treat the step as function-call or in-memory dispatch friendly.
+- `non_local` means transport, timeout, retry, or observation hooks may be required.
 
 ## Current Bootstrap Scope
 
@@ -64,4 +71,4 @@ The current bootstrap workstream defines:
 - validation versus runtime contract boundaries
 - the boundary between core DSL and future standard-library components
 
-The current bootstrap workstream does not yet create the Rust workspace or executable tools.
+The current bootstrap workstream already includes the Rust workspace and executable tools, and refinement now focuses on package/import structure, reusable std specs, and example-driven semantics.

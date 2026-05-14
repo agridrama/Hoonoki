@@ -19,18 +19,30 @@ pub fn lint(spec: &NormalizedSpec) -> DiagnosticSet {
 fn warn_on_unconnected_ports(spec: &NormalizedSpec, diagnostics: &mut Vec<Diagnostic>) {
     let mut connected = BTreeSet::new();
     for connection in &spec.connections {
-        connected.insert((connection.from_component.clone(), connection.from_port.clone()));
-        connected.insert((connection.to_component.clone(), connection.to_port.clone()));
+        connected.insert((
+            connection.within_component.clone(),
+            connection.from_target.clone(),
+            connection.from_port.clone(),
+        ));
+        connected.insert((
+            connection.within_component.clone(),
+            connection.to_target.clone(),
+            connection.to_port.clone(),
+        ));
     }
 
     for component in spec.components.values() {
         for port in component.ports.values() {
-            if !connected.contains(&(component.name.clone(), port.name.clone())) {
+            if !connected.contains(&(
+                component.qualified_name.clone(),
+                "self".to_string(),
+                port.name.clone(),
+            )) {
                 diagnostics.push(warning(
                     "HNK2201",
                     format!(
                         "Port `{}.{}` is not connected to any declared propagation path.",
-                        component.name, port.name
+                        component.qualified_name, port.name
                     ),
                     Some(
                         "Connect this port or remove it if the interaction is not intended yet."
@@ -56,7 +68,7 @@ fn warn_on_unused_state_fields(spec: &NormalizedSpec, diagnostics: &mut Vec<Diag
                     "HNK2202",
                     format!(
                         "State field `{}.{}` is never referenced by any transition.",
-                        component.name, field.name
+                        component.qualified_name, field.name
                     ),
                     Some(
                         "Remove the field or add a transition that reads or writes it."
@@ -82,11 +94,11 @@ fn warn_on_durable_state_gaps(spec: &NormalizedSpec, diagnostics: &mut Vec<Diagn
 
         if expects_recovery && durable_is_empty {
             diagnostics.push(warning(
-                "HNK2203",
-                format!(
-                    "Component `{}` mentions crash recovery assumptions but declares no durable state.",
-                    component.name
-                ),
+                    "HNK2203",
+                    format!(
+                        "Component `{}` mentions crash recovery assumptions but declares no durable state.",
+                        component.qualified_name
+                    ),
                 Some(
                     "Add `persistence.durable` fields or remove the recovery assumption if durability is not required."
                         .to_string(),

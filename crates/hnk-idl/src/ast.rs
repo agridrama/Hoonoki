@@ -2,16 +2,16 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::schema::{PortDirection, Visibility};
+use crate::schema::{ConnectionLocality, PortDirection, Visibility};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Spec {
     pub version: String,
+    pub package: String,
     pub events: Vec<Event>,
     pub components: Vec<Component>,
     pub connections: Vec<Connection>,
-    pub actors: Vec<Actor>,
     #[serde(default)]
     pub types: BTreeMap<String, TypeRef>,
     #[serde(default)]
@@ -59,9 +59,20 @@ pub struct Component {
     pub state: State,
     pub transitions: Vec<Transition>,
     #[serde(default)]
+    pub uses: Vec<ComponentUse>,
+    #[serde(default)]
     pub persistence: Option<Persistence>,
     #[serde(default)]
     pub assumptions: Vec<Annotation>,
+    #[serde(default)]
+    pub doc: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ComponentUse {
+    pub name: String,
+    pub component: String,
     #[serde(default)]
     pub doc: Option<String>,
 }
@@ -119,24 +130,12 @@ pub struct Transition {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Connection {
+    pub within: String,
     pub from: String,
     pub to: String,
+    pub locality: ConnectionLocality,
     #[serde(default)]
     pub contracts: ContractBag,
-    #[serde(default)]
-    pub doc: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Actor {
-    pub name: String,
-    #[serde(default)]
-    pub components: Vec<String>,
-    #[serde(default)]
-    pub role_selector: Option<String>,
-    #[serde(default)]
-    pub routing: Option<OpaqueValue>,
     #[serde(default)]
     pub doc: Option<String>,
 }
@@ -160,6 +159,6 @@ pub struct Deprecation {
 }
 
 pub type TypeRef = String;
-pub type OpaqueValue = serde_yaml::Value;
 pub type ContractBag = BTreeMap<String, OpaqueValue>;
 pub type Annotation = OpaqueValue;
+pub type OpaqueValue = serde_yaml::Value;

@@ -1,0 +1,87 @@
+version: "0.1.0"
+package: std.link
+imports:
+  - std/link/fair_loss_link.hnk.yaml
+  - std/time/retry_timer.hnk.yaml
+events:
+  - name: LinkSend
+    visibility: public
+    version: "1.0.0"
+    fields:
+      - name: message_id
+        type: string
+      - name: payload
+        type: string
+  - name: LinkDeliver
+    visibility: public
+    version: "1.0.0"
+    fields:
+      - name: message_id
+        type: string
+      - name: payload
+        type: string
+components:
+  - name: StubbornLink
+    uses:
+      - name: fll
+        component: std.link.FairLossLink
+      - name: timer
+        component: std.time.RetryTimer
+    state:
+      fields:
+        - name: sent
+          type: map<string, string>
+    ports:
+      - name: send_in
+        direction: in
+        event: LinkSend
+      - name: deliver_out
+        direction: out
+        event: LinkDeliver
+      - name: fll_send_out
+        direction: out
+        event: std.link.FairLossSend
+        contracts:
+          retry:
+            strategy: fixed_interval
+      - name: fll_deliver_in
+        direction: in
+        event: std.link.FairLossDeliver
+      - name: timer_arm_out
+        direction: out
+        event: std.time.ArmRetryTimer
+      - name: timeout_in
+        direction: in
+        event: std.time.RetryTimeout
+    transitions:
+      - name: send_first_time
+        on: LinkSend
+        writes: [sent]
+        emits: [std.link.FairLossSend, std.time.ArmRetryTimer]
+      - name: retransmit_after_timeout
+        on: std.time.RetryTimeout
+        reads: [sent]
+        writes: [sent]
+        emits: [std.link.FairLossSend, std.time.ArmRetryTimer]
+      - name: deliver_from_fair_loss
+        on: std.link.FairLossDeliver
+        emits: [LinkDeliver]
+connections:
+  - within: StubbornLink
+    from: self.fll_send_out
+    to: fll.send_in
+    locality: non_local
+    contracts:
+      delivery: at_least_once
+  - within: StubbornLink
+    from: fll.deliver_out
+    to: self.fll_deliver_in
+    locality: non_local
+  - within: StubbornLink
+    from: self.timer_arm_out
+    to: timer.arm_in
+    locality: local
+  - within: StubbornLink
+    from: timer.timeout_out
+    to: self.timeout_in
+    locality: local

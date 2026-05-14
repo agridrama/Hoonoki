@@ -13,3 +13,10 @@ pub enum PortDirection {
     In,
     Out,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConnectionLocality {
+    Local,
+    NonLocal,
+}

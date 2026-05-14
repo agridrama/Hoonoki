@@ -1,42 +1,43 @@
 use std::fmt::Write;
 
+use hnk_idl::schema::ConnectionLocality;
+
 use crate::ir::NormalizedSpec;
 
 pub fn render_inspect_summary(spec: &NormalizedSpec) -> String {
     let mut out = String::new();
     writeln!(&mut out, "Spec version: {}", spec.version).unwrap();
+    writeln!(&mut out, "Entry package: {}", spec.entry_package).unwrap();
     writeln!(
         &mut out,
-        "Overview: {} events, {} components, {} actors, {} connections",
+        "Overview: {} events, {} components, {} connections",
         spec.events.len(),
         spec.components.len(),
-        spec.actors.len(),
         spec.connections.len()
     )
     .unwrap();
 
-    writeln!(&mut out, "\nConnections:").unwrap();
     let local = spec
         .connections
         .iter()
-        .filter(|connection| !connection.crosses_actor_boundary)
+        .filter(|connection| matches!(connection.locality, ConnectionLocality::Local))
         .count();
-    let crossing = spec.actor_boundary_crossings.len();
+    let non_local = spec.non_local_connections.len();
+    writeln!(&mut out, "\nConnections:").unwrap();
     writeln!(&mut out, "- local: {local}").unwrap();
-    writeln!(&mut out, "- actor-crossing: {crossing}").unwrap();
+    writeln!(&mut out, "- non-local: {non_local}").unwrap();
 
-    if !spec.actor_boundary_crossings.is_empty() {
-        writeln!(&mut out, "\nActor-crossing details:").unwrap();
-        for connection in &spec.actor_boundary_crossings {
+    if !spec.non_local_connections.is_empty() {
+        writeln!(&mut out, "\nNon-local details:").unwrap();
+        for connection in &spec.non_local_connections {
             writeln!(
                 &mut out,
-                "- {}.{} -> {}.{} ({} -> {})",
-                connection.from_component,
+                "- within {}: {}.{} -> {}.{}",
+                connection.within_component,
+                connection.from_target,
                 connection.from_port,
-                connection.to_component,
-                connection.to_port,
-                connection.from_actor.as_deref().unwrap_or("<unassigned>"),
-                connection.to_actor.as_deref().unwrap_or("<unassigned>")
+                connection.to_target,
+                connection.to_port
             )
             .unwrap();
         }
@@ -46,13 +47,20 @@ pub fn render_inspect_summary(spec: &NormalizedSpec) -> String {
     for component in spec.components.values() {
         writeln!(
             &mut out,
-            "- {}: {} ports, {} transitions, {} state fields",
-            component.name,
+            "- {}: {} uses, {} ports, {} transitions, {} state fields",
+            component.qualified_name,
+            component.uses.len(),
             component.ports.len(),
             component.transitions.len(),
             component.state_fields.len()
         )
         .unwrap();
+        let uses: Vec<String> = component
+            .uses
+            .values()
+            .map(|component_use| format!("{}: {}", component_use.name, component_use.component))
+            .collect();
+        writeln!(&mut out, "  uses: {}", display_list(&uses)).unwrap();
         writeln!(
             &mut out,
             "  inbound events: {}",
@@ -76,10 +84,6 @@ pub fn render_inspect_summary(spec: &NormalizedSpec) -> String {
             writeln!(&mut out, "  durable state: <none>").unwrap();
         }
 
-        if !component.state_fields.is_empty() {
-            writeln!(&mut out, "  state-owning component: yes").unwrap();
-        }
-
         for transition in component.transitions.values() {
             writeln!(
                 &mut out,
@@ -95,16 +99,26 @@ pub fn render_inspect_summary(spec: &NormalizedSpec) -> String {
             .unwrap();
         }
 
-        let contract_ports: Vec<String> = component
-            .ports
-            .values()
-            .filter(|port| !port.contracts.is_empty())
-            .map(|port| format!("{}.{}", component.name, port.name))
-            .collect();
+        let local_wiring = spec
+            .connections
+            .iter()
+            .filter(|connection| {
+                connection.within_component == component.qualified_name
+                    && matches!(connection.locality, ConnectionLocality::Local)
+            })
+            .count();
+        let non_local_wiring = spec
+            .connections
+            .iter()
+            .filter(|connection| {
+                connection.within_component == component.qualified_name
+                    && matches!(connection.locality, ConnectionLocality::NonLocal)
+            })
+            .count();
         writeln!(
             &mut out,
-            "  contract-bearing ports: {}",
-            display_list(&contract_ports)
+                "  wiring: {} local, {} non-local",
+            local_wiring, non_local_wiring
         )
         .unwrap();
     }

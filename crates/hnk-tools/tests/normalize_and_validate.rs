@@ -1,33 +1,40 @@
-use hnk_idl::parse_spec;
+use std::path::Path;
+
+use hnk_idl::{load_bundle, parse_spec};
 use hnk_tools::{
-    lint, normalize, render_inspect_summary, render_mermaid, validate, validate_normalized,
+    lint, normalize, normalize_bundle, render_inspect_summary, render_mermaid, validate,
+    validate_normalized,
 };
 
 fn parse(source: &str) -> hnk_idl::Spec {
     parse_spec(None, source).expect("spec should parse")
 }
 
+fn bundle_root() -> &'static Path {
+    Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
+}
+
 #[test]
-fn normalizes_pingpong_and_detects_actor_boundary_crossings() {
+fn normalizes_pingpong_and_tracks_non_local_connections() {
     let source = include_str!("../../../examples/pingpong/hnk.yaml");
     let spec = parse(source);
     let normalized = normalize(&spec).expect("normalization should succeed");
 
     assert_eq!(normalized.events.len(), 4);
-    assert_eq!(normalized.components.len(), 2);
-    assert_eq!(normalized.actor_boundary_crossings.len(), 2);
+    assert_eq!(normalized.components.len(), 3);
+    assert_eq!(normalized.non_local_connections.len(), 2);
 
-    let pinger = &normalized.components["Pinger"];
-    assert!(pinger.inbound_events.iter().any(|event| event == "PongReturned"));
-    assert!(pinger.outbound_events.iter().any(|event| event == "PingRequested"));
+    let protocol = &normalized.components["examples.pingpong.PingProtocol"];
+    assert!(protocol.uses.contains_key("pinger"));
+    assert!(protocol.uses.contains_key("ponger"));
 }
 
 #[test]
 fn validate_accepts_pingpong_fixture() {
     let source = include_str!("../../../examples/pingpong/hnk.yaml");
     let spec = parse(source);
-
     let diagnostics = validate(&spec);
+
     assert!(diagnostics.is_empty(), "expected no diagnostics, got {:?}", diagnostics);
 }
 
@@ -35,17 +42,17 @@ fn validate_accepts_pingpong_fixture() {
 fn validate_rejects_public_event_without_version() {
     let source = r#"
 version: "0.1.0"
+package: examples.inline
+imports: []
 events:
   - name: PublicEvent
     visibility: public
     fields: []
 components: []
 connections: []
-actors: []
 "#;
 
     let diagnostics = validate(&parse(source));
-
     assert!(diagnostics.iter().any(|diagnostic| diagnostic.code == "HNK2101"));
 }
 
@@ -53,6 +60,8 @@ actors: []
 fn validate_rejects_invalid_state_field_reference() {
     let source = r#"
 version: "0.1.0"
+package: examples.inline
+imports: []
 events:
   - name: Tick
     visibility: internal
@@ -70,13 +79,9 @@ components:
         on: Tick
         reads: [missing]
 connections: []
-actors:
-  - name: node
-    components: [Watcher]
 "#;
 
     let diagnostics = validate(&parse(source));
-
     assert!(diagnostics.iter().any(|diagnostic| diagnostic.code == "HNK2106"));
 }
 
@@ -84,49 +89,51 @@ actors:
 fn validate_rejects_missing_reply_path_for_must_reply() {
     let source = r#"
 version: "0.1.0"
+package: examples.inline
+imports: []
 events:
   - name: Ask
     visibility: public
     version: "1.0.0"
     fields: []
+  - name: Ack
+    visibility: internal
+    fields: []
 components:
-  - name: Requester
-    state:
-      fields: []
-    ports:
-      - name: requests
-        direction: out
-        event: Ask
-        contracts:
-          must_reply: true
-      - name: inbox
-        direction: in
-        event: Ask
-    transitions:
-      - name: start
-        on: Ask
   - name: Worker
     state:
       fields: []
     ports:
-      - name: requests
+      - name: ask_in
         direction: in
         event: Ask
     transitions:
       - name: handle
         on: Ask
+  - name: RequestFlow
+    uses:
+      - name: worker
+        component: Worker
+    state:
+      fields: []
+    ports:
+      - name: request_out
+        direction: out
+        event: Ask
+        contracts:
+          must_reply: true
+      - name: reply_in
+        direction: in
+        event: Ack
+    transitions: []
 connections:
-  - from: Requester.requests
-    to: Worker.requests
-actors:
-  - name: a
-    components: [Requester]
-  - name: b
-    components: [Worker]
+  - within: RequestFlow
+    from: self.request_out
+    to: worker.ask_in
+    locality: non_local
 "#;
 
     let diagnostics = validate(&parse(source));
-
     assert!(diagnostics.iter().any(|diagnostic| diagnostic.code == "HNK2111"));
 }
 
@@ -134,6 +141,8 @@ actors:
 fn validate_rejects_connection_direction_mismatch() {
     let source = r#"
 version: "0.1.0"
+package: examples.inline
+imports: []
 events:
   - name: Tick
     visibility: internal
@@ -149,7 +158,10 @@ components:
     transitions:
       - name: on_tick
         on: Tick
-  - name: B
+  - name: Wrapper
+    uses:
+      - name: a
+        component: A
     state:
       fields: []
     ports:
@@ -158,13 +170,13 @@ components:
         event: Tick
     transitions: []
 connections:
-  - from: A.input
-    to: B.output
-actors: []
+  - within: Wrapper
+    from: a.input
+    to: self.output
+    locality: local
 "#;
 
     let diagnostics = validate(&parse(source));
-
     assert!(diagnostics.iter().any(|diagnostic| diagnostic.code == "HNK2103"));
     assert!(diagnostics.iter().any(|diagnostic| diagnostic.code == "HNK2104"));
 }
@@ -178,8 +190,8 @@ fn validate_normalized_keeps_transition_resolution() {
     let diagnostics = validate_normalized(&normalized);
     assert!(diagnostics.is_empty(), "expected no diagnostics, got {:?}", diagnostics);
 
-    let transition = &normalized.components["Pinger"].transitions["timeout_ping"];
-    assert_eq!(transition.on, "PingTimedOut");
+    let transition = &normalized.components["examples.pingpong.Pinger"].transitions["timeout_ping"];
+    assert_eq!(transition.on, "examples.pingpong.PingTimedOut");
     assert_eq!(transition.writes, vec!["outstanding".to_string()]);
 }
 
@@ -187,6 +199,8 @@ fn validate_normalized_keeps_transition_resolution() {
 fn lint_warns_on_unused_state_and_unconnected_ports() {
     let source = r#"
 version: "0.1.0"
+package: examples.inline
+imports: []
 events:
   - name: Tick
     visibility: internal
@@ -205,7 +219,6 @@ components:
       - name: on_tick
         on: Tick
 connections: []
-actors: []
 "#;
 
     let normalized = normalize(&parse(source)).expect("normalization should succeed");
@@ -219,6 +232,8 @@ actors: []
 fn lint_warns_when_recovery_assumption_has_no_durable_state() {
     let source = r#"
 version: "0.1.0"
+package: examples.inline
+imports: []
 events:
   - name: Recover
     visibility: internal
@@ -240,7 +255,6 @@ components:
         on: Recover
         reads: [token]
 connections: []
-actors: []
 "#;
 
     let normalized = normalize(&parse(source)).expect("normalization should succeed");
@@ -250,25 +264,55 @@ actors: []
 }
 
 #[test]
-fn graph_renders_actor_and_transition_summary() {
+fn graph_renders_component_wiring_summary() {
     let source = include_str!("../../../examples/pingpong/hnk.yaml");
     let normalized = normalize(&parse(source)).expect("normalization should succeed");
     let graph = render_mermaid(&normalized);
 
     assert!(graph.contains("flowchart LR"));
-    assert!(graph.contains("actor: node-a"));
-    assert!(graph.contains("cross-actor: PingRequested"));
-    assert!(graph.contains("%% transition adjacency summary"));
+    assert!(graph.contains("component: examples.pingpong.PingProtocol"));
+    assert!(graph.contains("non-local: examples.pingpong.PingRequested"));
 }
 
 #[test]
-fn inspect_summarizes_local_and_cross_actor_connections() {
-    let source = include_str!("../../../examples/pingpong/hnk.yaml");
+fn inspect_summarizes_local_and_non_local_connections() {
+    let source = include_str!("../../../examples/link/stubborn_link.yml");
     let normalized = normalize(&parse(source)).expect("normalization should succeed");
     let inspect = render_inspect_summary(&normalized);
 
-    assert!(inspect.contains("Connections:"));
-    assert!(inspect.contains("actor-crossing: 2"));
-    assert!(inspect.contains("state-owning component: yes"));
-    assert!(inspect.contains("contract-bearing ports: Pinger.requests"));
+    assert!(inspect.contains("non-local: 2"));
+    assert!(inspect.contains("uses: fll: examples.link.FairLossLink, timer: examples.link.RetryTimer"));
+    assert!(inspect.contains("wiring: 2 local, 2 non-local"));
+}
+
+#[test]
+fn validate_accepts_best_effort_broadcast_fixture() {
+    let bundle = load_bundle(
+        bundle_root().join("examples/broadcast/best_effort_broadcast.yml"),
+        bundle_root(),
+    )
+    .expect("bundle should load");
+    let normalized = normalize_bundle(&bundle).expect("bundle should normalize");
+    let diagnostics = validate_normalized(&normalized);
+
+    assert!(diagnostics.is_empty(), "expected no diagnostics, got {:?}", diagnostics);
+}
+
+#[test]
+fn inspect_and_graph_show_broadcast_composition() {
+    let bundle = load_bundle(
+        bundle_root().join("examples/broadcast/best_effort_broadcast.yml"),
+        bundle_root(),
+    )
+    .expect("bundle should load");
+    let normalized = normalize_bundle(&bundle).expect("bundle should normalize");
+
+    let inspect = render_inspect_summary(&normalized);
+    assert!(inspect.contains("examples.broadcast.BestEffortBroadcast"));
+    assert!(inspect.contains("uses: pl: std.link.PerfectLink"));
+    assert!(inspect.contains("non-local: 4"));
+
+    let graph = render_mermaid(&normalized);
+    assert!(graph.contains("component: examples.broadcast.BestEffortBroadcast"));
+    assert!(graph.contains("non-local: std.link.LinkSend"));
 }

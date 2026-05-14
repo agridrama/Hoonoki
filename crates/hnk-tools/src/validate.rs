@@ -5,7 +5,7 @@ use hnk_idl::diagnostics::{Diagnostic, DiagnosticSet, Severity};
 use hnk_idl::schema::{PortDirection, Visibility};
 
 use crate::contracts::has_must_reply;
-use crate::ir::{NormalizedConnection, NormalizedSpec};
+use crate::ir::{NormalizedComponent, NormalizedConnection, NormalizedSpec};
 use crate::normalize::normalize;
 
 pub fn validate(spec: &Spec) -> DiagnosticSet {
@@ -19,7 +19,6 @@ pub fn validate_normalized(spec: &NormalizedSpec) -> DiagnosticSet {
     let mut diagnostics = Vec::new();
 
     validate_event_versions(spec, &mut diagnostics);
-    validate_actor_membership(spec, &mut diagnostics);
     validate_connections(spec, &mut diagnostics);
     validate_transitions(spec, &mut diagnostics);
     validate_persistence(spec, &mut diagnostics);
@@ -32,28 +31,12 @@ fn validate_event_versions(spec: &NormalizedSpec, diagnostics: &mut Vec<Diagnost
     for event in spec.events.values() {
         if matches!(event.visibility, Visibility::Public) && event.version.is_none() {
             diagnostics.push(error(
-                "HNK2101",
+                    "HNK2101",
                 format!(
                     "Public event `{}` must declare a `version` field.",
-                    event.name
+                    event.qualified_name
                 ),
             ));
-        }
-    }
-}
-
-fn validate_actor_membership(spec: &NormalizedSpec, diagnostics: &mut Vec<Diagnostic>) {
-    for actor in spec.actors.values() {
-        for component in &actor.components {
-            if !spec.components.contains_key(component) {
-                diagnostics.push(error(
-                    "HNK2102",
-                    format!(
-                        "Actor `{}` references undefined component `{component}`.",
-                        actor.name
-                    ),
-                ));
-            }
         }
     }
 }
@@ -69,8 +52,8 @@ fn validate_connections(spec: &NormalizedSpec, diagnostics: &mut Vec<Diagnostic>
             diagnostics.push(error(
                 "HNK2103",
                 format!(
-                    "Connection source `{}.{}` must be an `out` port.",
-                    connection.from_component, connection.from_port
+                    "Connection source `{}.{}` inside `{}` must be an `out` port.",
+                    connection.from_target, connection.from_port, connection.within_component
                 ),
             ));
         }
@@ -78,8 +61,8 @@ fn validate_connections(spec: &NormalizedSpec, diagnostics: &mut Vec<Diagnostic>
             diagnostics.push(error(
                 "HNK2104",
                 format!(
-                    "Connection destination `{}.{}` must be an `in` port.",
-                    connection.to_component, connection.to_port
+                    "Connection destination `{}.{}` inside `{}` must be an `in` port.",
+                    connection.to_target, connection.to_port, connection.within_component
                 ),
             ));
         }
@@ -88,12 +71,13 @@ fn validate_connections(spec: &NormalizedSpec, diagnostics: &mut Vec<Diagnostic>
             diagnostics.push(error(
                 "HNK2105",
                 format!(
-                    "Connection `{}.{}` carries event `{}` on the source port, but destination `{}.{}` declares `{}`.",
-                    connection.from_component,
+                    "Connection `{}::{}` -> `{}::{}` inside `{}` carries event `{}` on the source port, but the destination declares `{}`.",
+                    connection.from_target,
                     connection.from_port,
-                    from_port.event,
-                    connection.to_component,
+                    connection.to_target,
                     connection.to_port,
+                    connection.within_component,
+                    from_port.event,
                     to_port.event
                 ),
             ));
@@ -110,7 +94,7 @@ fn validate_transitions(spec: &NormalizedSpec, diagnostics: &mut Vec<Diagnostic>
                         "HNK2106",
                         format!(
                             "Transition `{}.{}` reads undefined state field `{field}`.",
-                            component.name, transition.name
+                            component.qualified_name, transition.name
                         ),
                     ));
                 }
@@ -121,35 +105,37 @@ fn validate_transitions(spec: &NormalizedSpec, diagnostics: &mut Vec<Diagnostic>
                         "HNK2107",
                         format!(
                             "Transition `{}.{}` writes undefined state field `{field}`.",
-                            component.name, transition.name
+                            component.qualified_name, transition.name
                         ),
                     ));
                 }
             }
 
-            let has_input_port = component.ports.values().any(|port| {
-                matches!(port.direction, PortDirection::In) && port.event == transition.on
-            });
+            let has_input_port = component
+                .ports
+                .values()
+                .any(|port| matches!(port.direction, PortDirection::In) && port.event == transition.on);
             if !has_input_port {
                 diagnostics.push(error(
                     "HNK2108",
                     format!(
                         "Transition `{}.{}` listens to event `{}`, but no `in` port on that component declares it.",
-                        component.name, transition.name, transition.on
+                        component.qualified_name, transition.name, transition.on
                     ),
                 ));
             }
 
             for event in &transition.emits {
-                let has_output_port = component.ports.values().any(|port| {
-                    matches!(port.direction, PortDirection::Out) && port.event == *event
-                });
+                let has_output_port = component
+                    .ports
+                    .values()
+                    .any(|port| matches!(port.direction, PortDirection::Out) && port.event == *event);
                 if !has_output_port {
                     diagnostics.push(error(
                         "HNK2109",
                         format!(
                             "Transition `{}.{}` emits event `{event}`, but no `out` port on that component declares it.",
-                            component.name, transition.name
+                            component.qualified_name, transition.name
                         ),
                     ));
                 }
@@ -167,7 +153,7 @@ fn validate_persistence(spec: &NormalizedSpec, diagnostics: &mut Vec<Diagnostic>
                         "HNK2110",
                         format!(
                             "Component `{}` marks undefined state field `{field}` as durable.",
-                            component.name
+                            component.qualified_name
                         ),
                     ));
                 }
@@ -186,12 +172,18 @@ fn validate_must_reply(spec: &NormalizedSpec, diagnostics: &mut Vec<Diagnostic>)
             }
 
             let requested_event = &port.event;
-            if !has_declared_reply_path(spec, &reverse_connections, &component.name, &port.name, requested_event) {
+            if !has_declared_reply_path(
+                spec,
+                &reverse_connections,
+                &component.qualified_name,
+                &port.name,
+                requested_event,
+            ) {
                 diagnostics.push(error(
                     "HNK2111",
                     format!(
-                        "Port `{}.{}` declares `must_reply` for event `{requested_event}`, but no reply path is declared back to component `{}`.",
-                        component.name, port.name, component.name
+                        "Port `{}.{}` declares `must_reply` for event `{requested_event}`, but no reply path is declared back to that component.",
+                        component.qualified_name, port.name
                     ),
                 ));
             }
@@ -201,18 +193,16 @@ fn validate_must_reply(spec: &NormalizedSpec, diagnostics: &mut Vec<Diagnostic>)
 
 fn has_declared_reply_path(
     spec: &NormalizedSpec,
-    reverse_connections: &HashMap<(String, String), Vec<&NormalizedConnection>>,
+    reverse_connections: &HashMap<(String, String, String), Vec<&NormalizedConnection>>,
     requester_component: &str,
     requester_port: &str,
     requested_event: &str,
 ) -> bool {
-    let Some(request_port) = spec.components[requester_component].ports.get(requester_port) else {
-        return false;
-    };
-
+    let request_scope = requester_component;
     let outbound_matches = spec.connections.iter().filter(|connection| {
-        connection.from_component == requester_component
-            && connection.from_port == request_port.name
+        connection.within_component == request_scope
+            && connection.from_target == "self"
+            && connection.from_port == requester_port
     });
 
     for connection in outbound_matches {
@@ -230,10 +220,10 @@ fn has_declared_reply_path(
                     if can_route_event_back(
                         spec,
                         reverse_connections,
-                        &target_component.name,
+                        request_scope,
+                        &connection.to_target,
                         reply_source_port,
                         emitted_event,
-                        requester_component,
                     ) {
                         return true;
                     }
@@ -246,7 +236,7 @@ fn has_declared_reply_path(
 }
 
 fn output_ports_for_event<'a>(
-    component: &'a crate::ir::NormalizedComponent,
+    component: &'a NormalizedComponent,
     event: &str,
 ) -> Option<Vec<&'a str>> {
     let ports: Vec<&str> = component
@@ -256,26 +246,34 @@ fn output_ports_for_event<'a>(
         .map(|port| port.name.as_str())
         .collect();
 
-    if ports.is_empty() { None } else { Some(ports) }
+    if ports.is_empty() {
+        None
+    } else {
+        Some(ports)
+    }
 }
 
 fn can_route_event_back(
     spec: &NormalizedSpec,
-    reverse_connections: &HashMap<(String, String), Vec<&NormalizedConnection>>,
-    source_component: &str,
+    reverse_connections: &HashMap<(String, String, String), Vec<&NormalizedConnection>>,
+    within_component: &str,
+    source_target: &str,
     source_port: &str,
     event: &str,
-    requester_component: &str,
 ) -> bool {
-    let mut queue = VecDeque::from([(source_component.to_string(), source_port.to_string())]);
+    let mut queue = VecDeque::from([(
+        within_component.to_string(),
+        source_target.to_string(),
+        source_port.to_string(),
+    )]);
     let mut visited = BTreeSet::new();
 
-    while let Some((component, port)) = queue.pop_front() {
-        if !visited.insert((component.clone(), port.clone())) {
+    while let Some((scope, target, port)) = queue.pop_front() {
+        if !visited.insert((scope.clone(), target.clone(), port.clone())) {
             continue;
         }
 
-        let key = (component.clone(), port.clone());
+        let key = (scope.clone(), target.clone(), port.clone());
         let Some(connections) = reverse_connections.get(&key) else {
             continue;
         };
@@ -288,14 +286,18 @@ fn can_route_event_back(
                 continue;
             }
 
-            if connection.to_component == requester_component {
+            if connection.to_target == "self" {
                 return true;
             }
 
             for next_port in target_component.ports.values().filter(|port| {
                 matches!(port.direction, PortDirection::Out) && port.event == event
             }) {
-                queue.push_back((target_component.name.clone(), next_port.name.clone()));
+                queue.push_back((
+                    connection.within_component.clone(),
+                    connection.to_target.clone(),
+                    next_port.name.clone(),
+                ));
             }
         }
     }
@@ -305,11 +307,15 @@ fn can_route_event_back(
 
 fn reverse_connections<'a>(
     connections: &'a [NormalizedConnection],
-) -> HashMap<(String, String), Vec<&'a NormalizedConnection>> {
-    let mut index = HashMap::<(String, String), Vec<&NormalizedConnection>>::new();
+) -> HashMap<(String, String, String), Vec<&'a NormalizedConnection>> {
+    let mut index = HashMap::<(String, String, String), Vec<&NormalizedConnection>>::new();
     for connection in connections {
         index
-            .entry((connection.from_component.clone(), connection.from_port.clone()))
+            .entry((
+                connection.within_component.clone(),
+                connection.from_target.clone(),
+                connection.from_port.clone(),
+            ))
             .or_default()
             .push(connection);
     }

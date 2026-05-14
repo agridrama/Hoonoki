@@ -1,0 +1,67 @@
+version: "0.1.0"
+package: examples.broadcast
+imports:
+  - std/link/perfect_link.hnk.yaml
+events:
+  - name: BroadcastRequest
+    visibility: public
+    version: "1.0.0"
+    fields:
+      - name: message_id
+        type: string
+      - name: payload
+        type: string
+      - name: audience
+        type: string
+  - name: BroadcastDeliver
+    visibility: public
+    version: "1.0.0"
+    fields:
+      - name: message_id
+        type: string
+      - name: payload
+        type: string
+      - name: audience
+        type: string
+components:
+  - name: BestEffortBroadcast
+    doc: |
+      Public broadcast abstraction. One broadcast request may fan out to
+      multiple runtime peers, but that multiplicity is configured outside the IDL.
+    uses:
+      - name: pl
+        component: std.link.PerfectLink
+        doc: Transport dependency used for non-local dissemination.
+    state:
+      fields: []
+    ports:
+      - name: broadcast_in
+        direction: in
+        event: BroadcastRequest
+      - name: deliver_out
+        direction: out
+        event: BroadcastDeliver
+      - name: pl_send_out
+        direction: out
+        event: std.link.LinkSend
+      - name: pl_deliver_in
+        direction: in
+        event: std.link.LinkDeliver
+    transitions:
+      - name: start_broadcast
+        on: BroadcastRequest
+        emits: [std.link.LinkSend]
+      - name: deliver_from_link
+        on: std.link.LinkDeliver
+        emits: [BroadcastDeliver]
+connections:
+  - within: BestEffortBroadcast
+    from: self.pl_send_out
+    to: pl.send_in
+    locality: non_local
+    contracts:
+      delivery: best_effort
+  - within: BestEffortBroadcast
+    from: pl.deliver_out
+    to: self.pl_deliver_in
+    locality: non_local

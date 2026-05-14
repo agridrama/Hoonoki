@@ -13,5 +13,5 @@ pub use ir::NormalizedSpec;
 pub use graph::render_mermaid;
 pub use inspect::render_inspect_summary;
 pub use lint::lint;
-pub use normalize::normalize;
+pub use normalize::{normalize, normalize_bundle};
 pub use validate::{validate, validate_normalized};

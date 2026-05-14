@@ -1,4 +1,6 @@
 version: "0.1.0"
+package: examples.pingpong
+imports: []
 events:
   - name: StartPing
     visibility: internal
@@ -30,16 +32,12 @@ components:
         - name: outstanding
           type: map<string, string>
     ports:
-      - name: commands
+      - name: command_in
         direction: in
         event: StartPing
-      - name: requests
+      - name: request_out
         direction: out
         event: PingRequested
-        contracts:
-          must_reply: true
-          timeout:
-            after: 5s
       - name: pong_in
         direction: in
         event: PongReturned
@@ -49,50 +47,46 @@ components:
     transitions:
       - name: start_ping
         on: StartPing
-        writes:
-          - outstanding
-        emits:
-          - PingRequested
+        writes: [outstanding]
+        emits: [PingRequested]
       - name: finish_ping
         on: PongReturned
-        reads:
-          - outstanding
-        writes:
-          - outstanding
-        ensures:
-          - "outstanding entry cleared"
+        reads: [outstanding]
+        writes: [outstanding]
       - name: timeout_ping
         on: PingTimedOut
-        reads:
-          - outstanding
-        writes:
-          - outstanding
-        requires:
-          - "timer fired for known correlation"
+        reads: [outstanding]
+        writes: [outstanding]
   - name: Ponger
     state:
       fields: []
     ports:
-      - name: requests
+      - name: request_in
         direction: in
         event: PingRequested
-      - name: responses
+      - name: response_out
         direction: out
         event: PongReturned
     transitions:
       - name: answer_ping
         on: PingRequested
-        emits:
-          - PongReturned
+        emits: [PongReturned]
+  - name: PingProtocol
+    uses:
+      - name: pinger
+        component: Pinger
+      - name: ponger
+        component: Ponger
+    state:
+      fields: []
+    ports: []
+    transitions: []
 connections:
-  - from: Pinger.requests
-    to: Ponger.requests
-  - from: Ponger.responses
-    to: Pinger.pong_in
-actors:
-  - name: node-a
-    components:
-      - Pinger
-  - name: node-b
-    components:
-      - Ponger
+  - within: PingProtocol
+    from: pinger.request_out
+    to: ponger.request_in
+    locality: non_local
+  - within: PingProtocol
+    from: ponger.response_out
+    to: pinger.pong_in
+    locality: non_local

@@ -1,47 +1,51 @@
 use std::fmt::Write;
 
-use crate::ir::{NormalizedConnection, NormalizedSpec};
+use hnk_idl::schema::ConnectionLocality;
+
+use crate::ir::NormalizedConnection;
+use crate::ir::NormalizedSpec;
 
 pub fn render_mermaid(spec: &NormalizedSpec) -> String {
     let mut out = String::new();
     writeln!(&mut out, "flowchart LR").unwrap();
 
-    for actor in spec.actors.values() {
-        writeln!(&mut out, "  subgraph actor_{}[\"actor: {}\"]", sanitize(&actor.name), actor.name)
-            .unwrap();
-        for component_name in &actor.components {
-            if let Some(component) = spec.components.get(component_name) {
-                writeln!(
-                    &mut out,
-                    "    comp_{}[\"{}\"]",
-                    sanitize(&component.name),
-                    component.name
-                )
-                .unwrap();
-            }
-        }
-        writeln!(&mut out, "  end").unwrap();
-    }
-
     for component in spec.components.values() {
-        if !spec.actors.values().any(|actor| actor.components.contains(&component.name)) {
+        writeln!(
+            &mut out,
+            "  subgraph component_{}[\"component: {}\"]",
+            sanitize(&component.qualified_name),
+            component.qualified_name
+        )
+        .unwrap();
+        writeln!(
+            &mut out,
+            "    node_{}_self[\"self\"]",
+            sanitize(&component.qualified_name)
+        )
+        .unwrap();
+        for component_use in component.uses.values() {
             writeln!(
                 &mut out,
-                "  comp_{}[\"{}\"]",
-                sanitize(&component.name),
-                component.name
+                "    node_{}_{}[\"{}: {}\"]",
+                sanitize(&component.qualified_name),
+                sanitize(&component_use.name),
+                component_use.name,
+                component_use.component
             )
             .unwrap();
         }
+        writeln!(&mut out, "  end").unwrap();
     }
 
     for connection in &spec.connections {
         writeln!(
             &mut out,
-            "  comp_{} -->|\"{}\"| comp_{}",
-            sanitize(&connection.from_component),
+            "  node_{}_{} -->|\"{}\"| node_{}_{}",
+            sanitize(&connection.within_component),
+            sanitize(&connection.from_target),
             edge_label(spec, connection),
-            sanitize(&connection.to_component),
+            sanitize(&connection.within_component),
+            sanitize(&connection.to_target),
         )
         .unwrap();
     }
@@ -57,7 +61,7 @@ pub fn render_mermaid(spec: &NormalizedSpec) -> String {
             writeln!(
                 &mut out,
                 "  %% {}.{}: on {} -> {}",
-                component.name, transition.name, transition.on, emits
+                component.qualified_name, transition.name, transition.on, emits
             )
             .unwrap();
         }
@@ -67,14 +71,18 @@ pub fn render_mermaid(spec: &NormalizedSpec) -> String {
 }
 
 fn edge_label(spec: &NormalizedSpec, connection: &NormalizedConnection) -> String {
-    let source_port = &spec.components[&connection.from_component].ports[&connection.from_port];
-    let actor_label = if connection.crosses_actor_boundary {
-        "cross-actor"
+    let source_component = if connection.from_target == "self" {
+        &spec.components[&connection.within_component]
     } else {
-        "local"
+        &spec.components[&connection.from_component]
+    };
+    let source_port = &source_component.ports[&connection.from_port];
+    let locality = match connection.locality {
+        ConnectionLocality::Local => "local",
+        ConnectionLocality::NonLocal => "non-local",
     };
 
-    format!("{actor_label}: {}", source_port.event)
+    format!("{locality}: {}", source_port.event)
 }
 
 fn sanitize(name: &str) -> String {

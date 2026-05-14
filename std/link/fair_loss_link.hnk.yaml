@@ -1,0 +1,34 @@
+version: "0.1.0"
+package: std.link
+imports: []
+events:
+  - name: FairLossSend
+    visibility: internal
+    fields:
+      - name: message_id
+        type: string
+      - name: payload
+        type: string
+  - name: FairLossDeliver
+    visibility: internal
+    fields:
+      - name: message_id
+        type: string
+      - name: payload
+        type: string
+components:
+  - name: FairLossLink
+    state:
+      fields: []
+    ports:
+      - name: send_in
+        direction: in
+        event: FairLossSend
+      - name: deliver_out
+        direction: out
+        event: FairLossDeliver
+    transitions:
+      - name: forward_once
+        on: FairLossSend
+        emits: [FairLossDeliver]
+connections: []

@@ -18,8 +18,8 @@ pub fn render(component: &NormalizedComponent, header: &str) -> String {
         ));
     }
     out.push_str("}\n\n");
-    out.push_str("pub fn metadata(component: &'static str, port: Option<&'static str>, event: Option<&'static str>, actor_crossing: bool) -> HookMetadata {\n");
-    out.push_str("    HookMetadata { component, port, event, actor_crossing, correlation_hint: None, retry_hint: None }\n");
+    out.push_str("pub fn metadata(component: &'static str, port: Option<&'static str>, event: Option<&'static str>, locality: &'static str) -> HookMetadata {\n");
+    out.push_str("    HookMetadata { component, port, event, locality, correlation_hint: None, retry_hint: None }\n");
     out.push_str("}\n");
     out
 }

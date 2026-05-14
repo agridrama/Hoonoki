@@ -16,14 +16,17 @@ The normalized IR is expected to provide:
 
 - resolved references
 - fully qualified names
+- source file and package provenance
 - applied defaults
 - explicit visibility and version metadata
 - resolved contracts
+- resolved subcomponent uses
 - per-component inbound and outbound event views
-- actor boundary crossing connections
+- local and non-local connection views
+- import graph metadata
 - resolved transition input, outputs, reads, and writes
 
-The normalized IR captures declared interaction possibility, not concrete runtime instantiation. In particular, connections remain resolved propagation relationships between component ports rather than instance-level network edges.
+The normalized IR captures declared interaction possibility, not concrete runtime instantiation. In particular, connections remain resolved propagation relationships between `self.port` and `instance.port` endpoints rather than runtime node edges.
 
 ## Expected Nodes
 
@@ -35,7 +38,7 @@ The MVP normalized model includes:
 - `NormalizedPort`
 - `NormalizedTransition`
 - `NormalizedConnection`
-- `NormalizedActor`
+- `NormalizedComponentUse`
 - `NormalizedStateField`
 - `NormalizedContractSet`
 

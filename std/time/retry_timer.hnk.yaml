@@ -1,0 +1,31 @@
+version: "0.1.0"
+package: std.time
+imports: []
+events:
+  - name: ArmRetryTimer
+    visibility: internal
+    fields:
+      - name: message_id
+        type: string
+  - name: RetryTimeout
+    visibility: internal
+    kind: signal
+    fields:
+      - name: message_id
+        type: string
+components:
+  - name: RetryTimer
+    state:
+      fields: []
+    ports:
+      - name: arm_in
+        direction: in
+        event: ArmRetryTimer
+      - name: timeout_out
+        direction: out
+        event: RetryTimeout
+    transitions:
+      - name: arm_timer
+        on: ArmRetryTimer
+        emits: [RetryTimeout]
+connections: []
